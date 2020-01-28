@@ -57,7 +57,7 @@ class Furby_reader:
 
     def reshape_data(self, data):
         if self.header.ORDER == "TF":
-	       d = data.reshape(-1, self.header.NCHAN).T
+            d = data.reshape(-1, self.header.NCHAN).T
         elif self.header.ORDER == "FT":
             d = data.reshape(self.header.NCHAN, -1)
         else:

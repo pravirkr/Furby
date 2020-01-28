@@ -30,7 +30,7 @@ def tscrunch(fsdata, tx, avg=False):
         raise(ValueError("Currently only 1D and 2D arrays can be tscrunched"))
 
     if avg == True:
-	   tfsdata /= (1.*tx)
+        tfsdata /= (1.*tx)
     return tfsdata
 
 def fscrunch(data, fx, avg=False):
@@ -134,8 +134,8 @@ def main(args):
 
         if(k < len(args.furbies)-1):
             plt.show(block=False)
-	    raw_input("<Press Enter to see next plot>\n")
-	    plt.close('all')
+        raw_input("<Press Enter to see next plot>\n")
+        plt.close('all')
     if not args.pngs:
         plt.show()
 

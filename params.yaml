@@ -10,7 +10,7 @@ noise_per_channel:     1.0
 
 
 #------ Astrophysical Constants ------
-D:                     4.14881e6          # ms (from Pulsar Handbook Section 4.1.1)
+D:                     4148808.0          # ms (from Pulsar Handbook Section 4.1.1)
 scattering_index:      4.4
 
 

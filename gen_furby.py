@@ -4,7 +4,7 @@ import argparse
 import os, sys
 import glob
 import time
-
+import yaml
 from collections import namedtuple
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "params.yaml")
@@ -18,16 +18,6 @@ class AttrDict(dict):
     def __init__(self, *args, **kwargs):
         super(AttrDict, self).__init__(*args, **kwargs)
         self.__dict__ = self
-
-params = AttrDict(parse_config(CONFIG_FILE))
-
-consts = {
-    'tfactor': int( params.tsamp / 0.00001024 ),               #40.96 microseconds
-    'ffactor': int( ((params.ftop-params.fbottom)/params.nch)/0.01),      #We dont want dmsmear to be approximated beyond 5 kHz chw. So ffactor = chw/ 0.005
-    }
-
-tmp = namedtuple("co", consts.keys())
-C = tmp(*consts.values())
 
 
 def tscrunch(data, tx):
@@ -89,8 +79,8 @@ def get_pure_frb(snr, width, nch, nsamps):
 
     desired_signal = snr_per_channel * clean_noise_rms * np.sqrt(W_tophat_gauss)
 
-    x = np.arange(int(nsamps * C.tfactor) )
-    width = width * C.tfactor
+    x = np.arange(int(nsamps * params.tfactor) )
+    width = width * params.tfactor
     pure_frb_single_channel = gauss2(x, desired_signal, int(len(x)/2), width)
 
     if np.abs(np.sum(pure_frb_single_channel) - desired_signal) > desired_signal/50.:
@@ -185,14 +175,14 @@ def disperse(frb, dm, pre_shift, dmsmear):
     if not dmsmear:
         ffactor = 1
     else:
-        ffactor = C.ffactor
+        ffactor = params.ffactor
 
     if args.v:
-      print("Ffactor:", ffactor)
+        print("Ffactor:", ffactor)
     nch  = frb.shape[0] * ffactor
     # ms. Effectively 10.24 micro-seconds, just framing it in terms of 
     # tres of Hires filterbanks
-    tres = params.tsamp / C.tfactor *1e3  
+    tres = params.tsamp / params.tfactor *1e3  
 
     chw = (params.ftop-params.fbottom)/nch
     f_ch = np.linspace(params.ftop - chw/2, params.fbottom + chw/2, nch)
@@ -205,8 +195,8 @@ def disperse(frb, dm, pre_shift, dmsmear):
 
     #nsamps = delays_in_samples[-1] - delays_in_samples[0] + 2*frb.shape[1]
     #nsamps = delays_in_samples[-1]*2 + 2*frb.shape[1]
-    nsamps = 9000 * C.tfactor
-    start = nsamps/2 - int(pre_shift*C.tfactor)
+    nsamps = 9000 * params.tfactor
+    start = nsamps/2 - int(pre_shift*params.tfactor)
     end = start + frb.shape[1]
 
     dispersed_frb = np.zeros(nch * nsamps).reshape(nch, nsamps)
@@ -216,7 +206,7 @@ def disperse(frb, dm, pre_shift, dmsmear):
     if args.v:
         print(f'Initial frb shape {frb.shape} nsamps: {nsamps} \n'
               f'start, end: {start}{end}'
-              f'Tfactor, Ffactor, pre_shift: {C.tfactor}{ffactor}{int(pre_shift)}')
+              f'Tfactor, Ffactor, pre_shift: {params.tfactor}{ffactor}{int(pre_shift)}')
 
     for i in range(nch):
         delay = delays_in_samples[i]
@@ -229,7 +219,7 @@ def disperse(frb, dm, pre_shift, dmsmear):
         if args.v:
             sys.stdout.write(f'nch : {i}/{nch}  tsum = {tsum}\r')
     final_dispersed_frb = fscrunch(dispersed_frb, ffactor)
-    return final_dispersed_frb, undispersed_time_series/ffactor, nsamps/C.tfactor
+    return final_dispersed_frb, undispersed_time_series/ffactor, nsamps/params.tfactor
 
 
 def scatter(frb, tau0, nsamps, desired_snr): 
@@ -238,13 +228,13 @@ def scatter(frb, tau0, nsamps, desired_snr):
     fbottom = params.fbottom     #MHz
     chw = (ftop-fbottom)/(1.0*nch)
     f_ch = np.linspace(ftop - chw/2, fbottom + chw/2, nch)
-    nsamps = nsamps * C.tfactor
-    tau0 = tau0 * C.tfactor
+    nsamps = nsamps * params.tfactor
+    tau0 = tau0 * params.tfactor
 
     k = tau0 * (f_ch[0])**params.scattering_index     # proportionality constant
     taus = k / f_ch**params.scattering_index          # Calculating tau for each channel
-    exps=[]
-    scattered_frb=[]
+    exps = []
+    scattered_frb = []
     for i,t in enumerate(taus):
         # making the exponential with which to convolve each channel
         exps.append( np.exp(-1 * np.arange(nsamps) / t) )       
@@ -257,8 +247,9 @@ def scatter(frb, tau0, nsamps, desired_snr):
 
     scattered_frb = np.array(scattered_frb)
     scattered_tseries = scattered_frb.sum(axis=0)
-    scattered_width = scattered_tseries.sum() / np.max(scattered_tseries) / C.tfactor
-    new_snr = scattered_tseries.sum() / (np.sqrt(nch) * get_clean_noise_rms()) / np.sqrt(scattered_width)
+    scattered_width = scattered_tseries.sum() / np.max(scattered_tseries) / params.tfactor
+    new_snr = scattered_tseries.sum() / (np.sqrt(nch) * get_clean_noise_rms()) \
+                                      / np.sqrt(scattered_width)
     normalizing_factor = new_snr / desired_snr
     scattered_frb /= normalizing_factor
     return scattered_frb
@@ -281,56 +272,66 @@ def get_FWHM(frb_tseries):
     hpp1 = (np.abs(frb_tseries[:maxx] - hp)).argmin()
     hpp2 = (np.abs(frb_tseries[maxx:] - hp)).argmin() + maxx
 
-    FWHM = (1.*hpp2-hpp1)/C.tfactor
+    FWHM = (1.*hpp2-hpp1)/params.tfactor
     assert FWHM>0, (f'FWHM calculation went wrong somewhere. HPP points, '
                     f'maxx point and FWHM are {hpp1} {hpp2} {maxx} {FWHM}')
-    return FWHM, np.max(tscrunch(frb_tseries, C.tfactor))
+    return FWHM, np.max(tscrunch(frb_tseries, params.tfactor))
 
 def start_logging(ctl, db_d):
     if os.path.exists(ctl):
-	logger = open(ctl, 'a')
+        logger = open(ctl, 'a')
     else:
-	logger = open(ctl, 'a')
-	logger.write("#This is the furby catalogue for {0} directory\n".format(db_d))
-	logger.write("#Created on : {0}\n\n".format(time.asctime()))
-	existing_furbies = glob.glob(db_d+"furby_*")
-	if len(existing_furbies) > 0:
-	    logger.write("#The following furbies were found to be present in the directory before the creation of this catalogue:\n")
-	    for furby in existing_furbies:
-		logger.write("#"+furby+"\n")
-	    logger.write("\n")
-	logger.write("#FURBY_ID\tDM\tFWHM\tTAU0\tSNR\tSIGNAL\n")
+        logger = open(ctl, 'a')
+        logger.write(f'#This is the furby catalogue for {db_d} directory\n')
+        logger.write(f'#Created on : {time.asctime()}\n\n')
+        existing_furbies = glob.glob(db_d + "furby_*")
+        if len(existing_furbies) > 0:
+            logger.write(f'#The following furbies were found to be present in '
+                         f'the directory before the creation of this catalogue:\n')
+            for furby in existing_furbies:
+                logger.write(f'#{furby}\n')
+            logger.write("\n")
+        logger.write("#FURBY_ID\tDM\tFWHM\tTAU0\tSNR\tSIGNAL\n")
     return logger
 
 def check_for_permissions(db_d):
     if not os.path.exists(db_d):
-	try:
-	    print "The database directory: {0} does not exist. Attempting to create it now.".format(db_d)
-	    os.makedirs(db_d)
-	except OSError as E:
-	    print "Attempt to create the database directory failed because:\n{0}".format(E.strerror)
-	    print "Exiting...."
-	    sys.exit(1)
+        try:
+            print(f'The database directory: {db_d} does not exist. '
+                  f'Attempting to create it now.')
+            os.makedirs(db_d)
+        except OSError as error:
+            print("Attempt to create the database directory failed")
+            raise error
 
     if os.access(db_d, os.W_OK) and os.access(db_d, os.X_OK):
         return 
     else:
-	print "Do not have permissions to write/create in the database directory: {0}".format(db_d)
-	print "Exiting..."
-	sys.exit(1)
+        print(f'Do not have permissions to write/create in the '
+              f'database directory: {db_d}')
+        print("Exiting...")
+        sys.exit(1)
 
 def main(args):
+    params = AttrDict(parse_config(CONFIG_FILE))
+
+    # tfactor: 40.96 microseconds
+    # We dont want dmsmear to be approximated beyond 5 kHz chw. 
+    # So ffactor = chw/ 0.005
+    params.update({"tfactor":int(params.tsamp / 0.00001024), 
+                   "ffactor":int(((params.ftop-params.fbottom)/params.nch)/0.01)})
+
     database_directory = os.path.join(args.D, '')
     
     order = "TF"
     
     if args.plot and args.Num > 1:
-      raise IOError("Sorry cannot plot more than one furby at a time")
+        raise IOError("Sorry cannot plot more than one furby at a time")
 
     if not args.plot:
-	   check_for_permissions(database_directory)
-	   catalogue = database_directory+"furbies.cat"
-	   logger = start_logging(catalogue, database_directory)
+        check_for_permissions(database_directory)
+        catalogue = database_directory+"furbies.cat"
+        logger = start_logging(catalogue, database_directory)
 
     ID_series = params.ID_series
 
@@ -396,7 +397,7 @@ def main(args):
                 break
 
         tau0 = np.abs(np.random.normal(loc = dm / 1000., scale = 2, size=1))[0] 
-        #tau0 = 10.1/C.tfactor
+        #tau0 = 10.1/params.tfactor
       
         # = half of nsamps required for the gaussian. i.e. 
         # The total nsamps will be 10 * sigma.  
@@ -423,7 +424,7 @@ def main(args):
             print("Creating frequency structure")
         frb,f = create_freq_structure(frb, kind=kind)
 
-        pure_width = pure_signal / np.max( frb.sum(axis=0) )/C.tfactor
+        pure_width = pure_signal / np.max( frb.sum(axis=0) )/params.tfactor
         pure_snr = pure_signal / (np.sqrt(nch) * get_clean_noise_rms() * np.sqrt(pure_width))
       
         if args.v:
@@ -446,8 +447,8 @@ def main(args):
             frb = scatter(frb, tau0, nsamps_for_exponential, pure_snr)
         sky_signal = np.sum(frb.flatten())
         sky_frb_tseries = np.sum(frb, axis=0)
-        #sky_frb_peak = np.max( tscrunch(sky_frb_tseries, C.tfactor)   )
-        sky_frb_top_hat_width = sky_signal / np.max(sky_frb_tseries) / C.tfactor
+        #sky_frb_peak = np.max( tscrunch(sky_frb_tseries, params.tfactor)   )
+        sky_frb_top_hat_width = sky_signal / np.max(sky_frb_tseries) / params.tfactor
         #sky_frb_top_hat_width = sky_signal / sky_frb_peak
         sky_snr = sky_signal / ( get_clean_noise_rms() * np.sqrt(nch) * np.sqrt(sky_frb_top_hat_width) )
 
@@ -472,12 +473,12 @@ def main(args):
         if args.v:
             print("Scrunching")
 
-        scrunched_frb = tscrunch(frb, C.tfactor)
+        scrunched_frb = tscrunch(frb, params.tfactor)
         signal_after_scrunching = np.sum(scrunched_frb.flatten())
 
         #final_top_hat_width = signal_after_scrunching / maxima		
         #comes out in samples
-        final_top_hat_width = signal_after_scrunching / np.max(undispersed_tseries) / C.tfactor
+        final_top_hat_width = signal_after_scrunching / np.max(undispersed_tseries) / params.tfactor
         output_snr = signal_after_scrunching / (get_clean_noise_rms() * np.sqrt(nch) *  np.sqrt(final_top_hat_width) )
 
         if args.v:
@@ -532,19 +533,20 @@ def main(args):
             if args.v:
                 print("Saving the FRB in '"+database_directory+"' directory")
 
-            out = open(database_directory+name, 'wb')
-            out.write(header_string)
-            if order == "TF":
-                #Order = 'F' means column-major, since we are writing data in TF format.
-                O = 'F'				
-            if order == "FT":
-                #Order = 'C' means row-major, since we are writing data in FT format.
-                O = 'C'				
-          final_frb.flatten(order=O).tofile(out)          
-          out.close()
-          logger.write(ID+"\t"+str(dm)+"\t"+str(FWHM*tsamp)+"\t" + str(tau0*tsamp)+"\t" + str(output_snr)+"\t"+str(signal_after_scrunching)+"\n")
+            with open(database_directory+name, 'wb') as out:
+                out.write(header_string)
+                if order == "TF":
+                    #Order = 'F' means column-major, since we are writing data in TF format.
+                    O = 'F'				
+                if order == "FT":
+                    #Order = 'C' means row-major, since we are writing data in FT format.
+                    O = 'C'				
+                final_frb.flatten(order=O).tofile(out)
+            logger.write(ID+"\t"+str(dm)+"\t"+str(FWHM*tsamp)+"\t" \
+                        + str(tau0*tsamp)+"\t" + str(output_snr)+"\t" \
+                        +str(signal_after_scrunching)+"\n")
           
-          print("Name : ", params["SOURCE"])
+            print("Name : ", params["SOURCE"])
 
         #-----------------------------------------------------------------------
     if not args.plot:
@@ -552,7 +554,7 @@ def main(args):
 
     if args.plot:
         if args.v:
-            print "Plotting"
+            print("Plotting")
         plt.figure()
         plt.imshow(frb_b_d, aspect='auto', cmap='afmhot', interpolation='None')
         plt.title("FRB before dispersion")
@@ -566,7 +568,7 @@ def main(args):
         plt.title("FRB")
 
         plt.figure()
-        plt.plot(tscrunch(undispersed_tseries, C.tfactor))
+        plt.plot(tscrunch(undispersed_tseries, params.tfactor))
         plt.title("Un-dispersed FRB time series. We should be aiming to recover this profile")
         plt.show()
 
