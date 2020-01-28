@@ -6,13 +6,24 @@ import glob
 import time
 
 from collections import namedtuple
-from parse_cfg import parse_cfg as pcfg
 
-P = pcfg("params.cfg")
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "params.yaml")
+
+def parse_config(fname):
+    with open(fname, 'r') as fobj:
+        config = yaml.load(fobj)
+    return config
+
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+
+params = AttrDict(parse_config(CONFIG_FILE))
 
 consts = {
-    'tfactor': int( P.tsamp / 0.00001024 ),               #40.96 microseconds
-    'ffactor': int( ((P.ftop-P.fbottom)/P.nch)/0.01),      #We dont want dmsmear to be approximated beyond 5 kHz chw. So ffactor = chw/ 0.005
+    'tfactor': int( params.tsamp / 0.00001024 ),               #40.96 microseconds
+    'ffactor': int( ((params.ftop-params.fbottom)/params.nch)/0.01),      #We dont want dmsmear to be approximated beyond 5 kHz chw. So ffactor = chw/ 0.005
     }
 
 tmp = namedtuple("co", consts.keys())
@@ -55,7 +66,7 @@ def fscrunch(data, fx):
 
 def get_clean_noise_rms():
     #noise rms per channel
-    return (P.noise_per_channel)
+    return (params.noise_per_channel)
 
 def gauss(x, a, x0, sigma):
     return a/np.sqrt(2*np.pi*sigma**2) * np.exp(-(x-x0*1.)**2 / (2.*sigma**2))
@@ -149,8 +160,8 @@ def create_freq_structure(frb, kind):
         for i in range(n_blobs):
             center_of_blob = np.random.uniform(0, nch, 1)
             # We want roughly 4 +- 1 MHz blobs. 4 MHz = 4/chw 
-            # chans = 4./((P.ftop - P.bottom)/nch) chans
-            NCHAN_PER_MHz = np.abs(1./( (P.ftop-P.fbottom)/nch ))
+            # chans = 4./((params.ftop - params.bottom)/nch) chans
+            NCHAN_PER_MHz = np.abs(1./( (params.ftop-params.fbottom)/nch ))
             width_of_blob = np.random.normal(loc = 4.*NCHAN_PER_MHz, 
                                              scale = NCHAN_PER_MHz, size = 1)
             # For just one blob (n_blobs=1), this does not matter because we 
@@ -181,12 +192,12 @@ def disperse(frb, dm, pre_shift, dmsmear):
     nch  = frb.shape[0] * ffactor
     # ms. Effectively 10.24 micro-seconds, just framing it in terms of 
     # tres of Hires filterbanks
-    tres = P.tsamp / C.tfactor *1e3  
+    tres = params.tsamp / C.tfactor *1e3  
 
-    chw = (P.ftop-P.fbottom)/nch
-    f_ch = np.linspace(P.ftop - chw/2, P.fbottom + chw/2, nch)
+    chw = (params.ftop-params.fbottom)/nch
+    f_ch = np.linspace(params.ftop - chw/2, params.fbottom + chw/2, nch)
     # Only works if freq in MHz and D in ms. Output delays in ms
-    delays = P.D * f_ch**(-2) * dm    
+    delays = params.D * f_ch**(-2) * dm    
     delays -= delays[int(nch/2)]
     # here we will have slight approximations due to quantization, 
     # but at 10.24 usec resolution they should be minimal
@@ -223,15 +234,15 @@ def disperse(frb, dm, pre_shift, dmsmear):
 
 def scatter(frb, tau0, nsamps, desired_snr): 
     nch = frb.shape[0]
-    ftop = P.ftop        #MHz
-    fbottom = P.fbottom     #MHz
+    ftop = params.ftop        #MHz
+    fbottom = params.fbottom     #MHz
     chw = (ftop-fbottom)/(1.0*nch)
     f_ch = np.linspace(ftop - chw/2, fbottom + chw/2, nch)
     nsamps = nsamps * C.tfactor
     tau0 = tau0 * C.tfactor
 
-    k = tau0 * (f_ch[0])**P.scattering_index     # proportionality constant
-    taus = k / f_ch**P.scattering_index          # Calculating tau for each channel
+    k = tau0 * (f_ch[0])**params.scattering_index     # proportionality constant
+    taus = k / f_ch**params.scattering_index          # Calculating tau for each channel
     exps=[]
     scattered_frb=[]
     for i,t in enumerate(taus):
@@ -321,12 +332,12 @@ def main(args):
 	   catalogue = database_directory+"furbies.cat"
 	   logger = start_logging(catalogue, database_directory)
 
-    ID_series = P.ID_series
+    ID_series = params.ID_series
 
     if args.v:
         print("Starting FRB Generator...")
-    tsamp = P.tsamp                              #seconds
-    nch = P.nch
+    tsamp = params.tsamp                              #seconds
+    nch = params.nch
     supported_kinds = ["slope", "smooth_envelope", "two_peaks", "three_peaks", "ASKAP"]
     
     if isinstance(args.snr, float):
@@ -340,14 +351,14 @@ def main(args):
     #snr = 15
 
     if isinstance(args.width, float):
-        #widths = (args.width *1e-3/ P.tsamp) * np.ones(args.Num)
-        widths = args.width *1e-3/ P.tsamp * np.ones(args.Num)
+        #widths = (args.width *1e-3/ params.tsamp) * np.ones(args.Num)
+        widths = args.width *1e-3/ params.tsamp * np.ones(args.Num)
     elif isinstance(args.width, list) and len(args.width) ==1:
-        #widths = int(args.width[0]*1e-3/P.tsamp) * np.ones(args.Num)
-        widths = args.width[0]*1e-3/P.tsamp * np.ones(args.Num)
+        #widths = int(args.width[0]*1e-3/params.tsamp) * np.ones(args.Num)
+        widths = args.width[0]*1e-3/params.tsamp * np.ones(args.Num)
     elif isinstance(args.width, list) and len(args.width) ==2:
-        #widths = np.random.randint(args.width[0]*1e-3/P.tsamp,args.width[1]*1e-3/P.tsamp, args.Num)   #samples
-        widths = np.random.uniform(args.width[0]*1e-3/P.tsamp,args.width[1]*1e-3/P.tsamp, args.Num)   #samples
+        #widths = np.random.randint(args.width[0]*1e-3/params.tsamp,args.width[1]*1e-3/params.tsamp, args.Num)   #samples
+        widths = np.random.uniform(args.width[0]*1e-3/params.tsamp,args.width[1]*1e-3/params.tsamp, args.Num)   #samples
     else:
         raise IOError("Invalid input for Width")
     #width =3
@@ -375,9 +386,9 @@ def main(args):
             kind = supported_kinds[np.random.randint(0, len(supported_kinds), 1)[0]]
 
         while(True):
-            ID = np.random.randint((ID_series*P.N_per_IDseries + 1), 
-                                   (ID_series+1)*P.N_per_IDseries, 1)[0] 
-            ID = str(ID).zfill(int(np.log10(P.N_per_IDseries)))
+            ID = np.random.randint((ID_series*params.N_per_IDseries + 1), 
+                                   (ID_series+1)*params.N_per_IDseries, 1)[0] 
+            ID = str(ID).zfill(int(np.log10(params.N_per_IDseries)))
             name = "furby_"+ID
             if os.path.exists(database_directory+name):
                 continue
@@ -392,7 +403,7 @@ def main(args):
         nsamps_for_gaussian = 5 * width            
         if nsamps_for_gaussian < 1:
             nsamps_for_gaussian = 1
-        nsamps_for_exponential = int(6 * tau0 * ((P.ftop+P.fbottom)/2 / P.fbottom)**P.scattering_index)
+        nsamps_for_exponential = int(6 * tau0 * ((params.ftop+params.fbottom)/2 / params.fbottom)**params.scattering_index)
 
         if args.v:
             print("Randomly generated Parameters:")
@@ -418,7 +429,7 @@ def main(args):
         if args.v:
             print(f'Pure signal (input) = {pure_signal}, '
                   f'signal after freq_struct = {np.sum(frb.flatten())}, '
-                  f'pure_snr = {pure_snr}, pure_width = {pure_width*P.tsamp*1e3}ms')
+                  f'pure_snr = {pure_snr}, pure_width = {pure_width*params.tsamp*1e3}ms')
 
         #if args.v:
         #  print "Applying Bandpass"
@@ -442,7 +453,7 @@ def main(args):
 
         if args.v:
             print(f'Sky_signal = {sky_signal}, '
-                  f'sky_width = {sky_frb_top_hat_width*P.tsamp*1e3} ms, '
+                  f'sky_width = {sky_frb_top_hat_width*params.tsamp*1e3} ms, '
                   f'sky_snr = {sky_snr}')
       
         frb_b_d = frb.copy()      #FRB before dispersing
@@ -486,8 +497,8 @@ def main(args):
               "TELESCOPE":    "MOST",
               "ID":   ID,
               "SOURCE":	name,
-              "FREQ": (P.ftop + P.fbottom)/2,         #MHz
-              "BW":   P.fbottom - P.ftop,              #MHz. Negative to indicate that the first channel has highest frequency
+              "FREQ": (params.ftop + params.fbottom)/2,         #MHz
+              "BW":   params.fbottom - params.ftop,              #MHz. Negative to indicate that the first channel has highest frequency
               "NPOL": 1,
               "NBIT": 32,
               "TSAMP":    tsamp * 1e6,      	#usec	--Dont change this, dspsr needs tsamp in microseconds to work properly
@@ -497,8 +508,8 @@ def main(args):
               "OBS_OFFSET":   0,           #samples
               "NCHAN":    nch,
               "ORDER":    order,            #This is ensured later in the code while writing data with flatten(order=O)
-              "FTOP": P.ftop,        #MHz
-              "FBOTTOM": P.fbottom,     #MHz
+              "FTOP": params.ftop,        #MHz
+              "FBOTTOM": params.fbottom,     #MHz
               "TRACKING": "false",
               "FB_ENABLED":   "true",
               "INSTRUMENT":   "MOPSR",
