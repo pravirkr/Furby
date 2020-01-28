@@ -134,7 +134,7 @@ def main(args):
 
         if(k < len(args.furbies)-1):
             plt.show(block=False)
-        raw_input("<Press Enter to see next plot>\n")
+        input("<Press Enter to see next plot>\n")
         plt.close('all')
     if not args.pngs:
         plt.show()

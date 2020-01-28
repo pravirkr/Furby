@@ -17,3 +17,7 @@ scattering_index:      4.4
 #------ Furby specific params --------
 N_per_IDseries:        1000
 ID_series:             1
+
+
+#------ Output data order --------
+order:  TF                                 # (column-major or row-major)
