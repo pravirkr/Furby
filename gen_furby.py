@@ -33,7 +33,7 @@ def tscrunch(data, tx):
         nc=data.shape[1]
     
         endpoint=int(nc/tx) * tx
-        tmp=data[:,:endpoint].reshape(nr, nc/tx, tx)
+        tmp=data[:,:endpoint].reshape(nr, nc//tx, tx)
         tsdata=tmp.sum(axis=-1)
 
         return tsdata
@@ -54,7 +54,7 @@ def fscrunch(data, fx):
     fsdata = np.mean(data.reshape(nr/fx, -1, nc), axis=1)
     return fsdata
 
-def get_clean_noise_rms():
+def get_clean_noise_rms(params):
     #noise rms per channel
     return (params.noise_per_channel)
 
@@ -67,9 +67,9 @@ def gauss2(x, a, x0, FWHM):
     return a/np.sqrt(2*np.pi*sigma**2) * np.exp(-(x-x0*1.)**2 / (2.*sigma**2))
 
 
-def get_pure_frb(snr, width, nch, nsamps):
+def get_pure_frb(snr, width, nch, nsamps, params):
     # this is ideal noise rms per channel
-    clean_noise_rms = get_clean_noise_rms()
+    clean_noise_rms = get_clean_noise_rms(params)
     # Dividing snr equally among all channels for the pure case
     snr_per_channel = snr*1./np.sqrt(nch)        
 
@@ -115,7 +115,7 @@ def apply_bandpass(frb):
     frb = frb * bp.reshape(-1,1)
     return frb
 
-def create_freq_structure(frb, kind):
+def create_freq_structure(frb, kind, params):
     nch = frb.shape[0]
     x = np.arange(nch)
     # kind of scintillation
@@ -145,7 +145,7 @@ def create_freq_structure(frb, kind):
         z6 = nch
         f = -1 * (x-z1) * (x-z2) * (x-z3) * (x-z4) * (x-z5) * (x-z6)
     if kind == 'ASKAP':
-        n_blobs = np.floor(np.random.exponential(scale = 3, size=1)) + 1
+        n_blobs = int(np.floor(np.random.exponential(scale = 3, size=1)[0]) + 1)
         f = np.zeros(nch)
         for i in range(n_blobs):
             center_of_blob = np.random.uniform(0, nch, 1)
@@ -170,7 +170,7 @@ def create_freq_structure(frb, kind):
     frb = frb * f.reshape(-1, 1)
     return frb, f
 
-def disperse(frb, dm, pre_shift, dmsmear):
+def disperse(frb, dm, pre_shift, dmsmear, params):
     tsum = 0
     if not dmsmear:
         ffactor = 1
@@ -196,7 +196,7 @@ def disperse(frb, dm, pre_shift, dmsmear):
     #nsamps = delays_in_samples[-1] - delays_in_samples[0] + 2*frb.shape[1]
     #nsamps = delays_in_samples[-1]*2 + 2*frb.shape[1]
     nsamps = 9000 * params.tfactor
-    start = nsamps/2 - int(pre_shift*params.tfactor)
+    start = nsamps//2 - int(pre_shift*params.tfactor)
     end = start + frb.shape[1]
 
     dispersed_frb = np.zeros(nch * nsamps).reshape(nch, nsamps)
@@ -205,8 +205,8 @@ def disperse(frb, dm, pre_shift, dmsmear):
 
     if args.v:
         print(f'Initial frb shape {frb.shape} nsamps: {nsamps} \n'
-              f'start, end: {start}{end}'
-              f'Tfactor, Ffactor, pre_shift: {params.tfactor}{ffactor}{int(pre_shift)}')
+              f'start, end: {start}, {end}'
+              f'Tfactor, Ffactor, pre_shift: {params.tfactor}, {ffactor}, {int(pre_shift)}')
 
     for i in range(nch):
         delay = delays_in_samples[i]
@@ -222,7 +222,7 @@ def disperse(frb, dm, pre_shift, dmsmear):
     return final_dispersed_frb, undispersed_time_series/ffactor, nsamps/params.tfactor
 
 
-def scatter(frb, tau0, nsamps, desired_snr): 
+def scatter(frb, tau0, nsamps, desired_snr, params): 
     nch = frb.shape[0]
     ftop = params.ftop        #MHz
     fbottom = params.fbottom     #MHz
@@ -248,24 +248,24 @@ def scatter(frb, tau0, nsamps, desired_snr):
     scattered_frb = np.array(scattered_frb)
     scattered_tseries = scattered_frb.sum(axis=0)
     scattered_width = scattered_tseries.sum() / np.max(scattered_tseries) / params.tfactor
-    new_snr = scattered_tseries.sum() / (np.sqrt(nch) * get_clean_noise_rms()) \
+    new_snr = scattered_tseries.sum() / (np.sqrt(nch) * get_clean_noise_rms(params)) \
                                       / np.sqrt(scattered_width)
     normalizing_factor = new_snr / desired_snr
     scattered_frb /= normalizing_factor
     return scattered_frb
 
-def make_psrdada_header(hdr_len, params):
+def make_psrdada_header(hdr_len, hdr_params):
     header=""
-    for i in params:
+    for i in hdr_params:
         header += i
         tabs = 3 - int(len(i)/8)
         header += "\t"*tabs
-        header += str(params[i])+"\n"
+        header += str(hdr_params[i])+"\n"
     leftover_space = hdr_len - len(header)
     header += '\0' * leftover_space
     return header
 
-def get_FWHM(frb_tseries):
+def get_FWHM(frb_tseries, params):
     maxx = np.argmax(frb_tseries)
     hp = frb_tseries[maxx] / 2.
     #Finding the half-power points
@@ -291,7 +291,7 @@ def start_logging(ctl, db_d):
             for furby in existing_furbies:
                 logger.write(f'#{furby}\n')
             logger.write("\n")
-        logger.write("#FURBY_ID\tDM\tFWHM\tTAU0\tSNR\tSIGNAL\n")
+        logger.write("#ID\tDM\tFWHM\t\tTAU0\t\tSNR\tSIGNAL\n")
     return logger
 
 def check_for_permissions(db_d):
@@ -408,13 +408,14 @@ def main(args):
 
         if args.v:
             print("Randomly generated Parameters:")
-            print(f'ID= {ID}, SNR= {snr}, Width= {width*tsamp*1e3}ms, DM= {dm}, '
-                  f'tau0= {tau0*tsamp*1e3}ms, kind= {kind}')
+            print(f'ID= {ID}, SNR= {snr}, Width= {width*tsamp*1e3} ms, DM= {dm}, '
+                  f'tau0= {tau0*tsamp*1e3:.10f}ms, kind= {kind}')
       
         if args.v:
             print("Getting pure FRB")
         try:
-            frb = get_pure_frb(snr=snr, width = width, nch=nch, nsamps=nsamps_for_gaussian)
+            frb = get_pure_frb(snr=snr, width = width, nch=nch, 
+                               nsamps=nsamps_for_gaussian, params=params)
         except RuntimeError as R:
             print(R)
             continue
@@ -422,15 +423,16 @@ def main(args):
         pure_signal = np.sum(frb.flatten())
         if args.v:
             print("Creating frequency structure")
-        frb,f = create_freq_structure(frb, kind=kind)
+        frb,f = create_freq_structure(frb, kind=kind, params=params)
 
         pure_width = pure_signal / np.max( frb.sum(axis=0) )/params.tfactor
-        pure_snr = pure_signal / (np.sqrt(nch) * get_clean_noise_rms() * np.sqrt(pure_width))
+        pure_snr = pure_signal / (np.sqrt(nch) * get_clean_noise_rms(params) * np.sqrt(pure_width))
       
         if args.v:
             print(f'Pure signal (input) = {pure_signal}, '
-                  f'signal after freq_struct = {np.sum(frb.flatten())}, '
-                  f'pure_snr = {pure_snr}, pure_width = {pure_width*params.tsamp*1e3}ms')
+                  f'signal after freq_struct = {np.sum(frb.flatten())}')
+            print(f'Pure_snr = {pure_snr:.2f}, '
+                  f'pure_width = {pure_width*params.tsamp*1e3:.3f} ms')
 
         #if args.v:
         #  print "Applying Bandpass"
@@ -444,18 +446,18 @@ def main(args):
             print("Tau0 = 0, no scattering applied")
             pass
         else:
-            frb = scatter(frb, tau0, nsamps_for_exponential, pure_snr)
+            frb = scatter(frb, tau0, nsamps_for_exponential, pure_snr, params)
         sky_signal = np.sum(frb.flatten())
         sky_frb_tseries = np.sum(frb, axis=0)
         #sky_frb_peak = np.max( tscrunch(sky_frb_tseries, params.tfactor)   )
         sky_frb_top_hat_width = sky_signal / np.max(sky_frb_tseries) / params.tfactor
         #sky_frb_top_hat_width = sky_signal / sky_frb_peak
-        sky_snr = sky_signal / ( get_clean_noise_rms() * np.sqrt(nch) * np.sqrt(sky_frb_top_hat_width) )
+        sky_snr = sky_signal / ( get_clean_noise_rms(params) * np.sqrt(nch) * np.sqrt(sky_frb_top_hat_width) )
 
         if args.v:
             print(f'Sky_signal = {sky_signal}, '
                   f'sky_width = {sky_frb_top_hat_width*params.tsamp*1e3} ms, '
-                  f'sky_snr = {sky_snr}')
+                  f'sky_snr = {sky_snr:.2f}')
       
         frb_b_d = frb.copy()      #FRB before dispersing
       
@@ -464,22 +466,23 @@ def main(args):
         # Remember, nsamps_for_gaussian is already half the number of samples
         frb, undispersed_tseries, NSAMPS = disperse(frb, dm, 
                                                 pre_shift=nsamps_for_gaussian,
-                                                dmsmear = args.dmsmear) 
+                                                dmsmear = args.dmsmear,
+                                                params=params) 
 
         signal_after_disp = np.sum(frb.flatten())
 
-        FWHM,maxima = get_FWHM(undispersed_tseries)
+        FWHM,maxima = get_FWHM(undispersed_tseries, params)
 
         if args.v:
             print("Scrunching")
-
+            print("")
         scrunched_frb = tscrunch(frb, params.tfactor)
         signal_after_scrunching = np.sum(scrunched_frb.flatten())
 
         #final_top_hat_width = signal_after_scrunching / maxima		
         #comes out in samples
         final_top_hat_width = signal_after_scrunching / np.max(undispersed_tseries) / params.tfactor
-        output_snr = signal_after_scrunching / (get_clean_noise_rms() * np.sqrt(nch) *  np.sqrt(final_top_hat_width) )
+        output_snr = signal_after_scrunching / (get_clean_noise_rms(params) * np.sqrt(nch) *  np.sqrt(final_top_hat_width) )
 
         if args.v:
             print("Input signal, Sky_signal, Output signal, Input SNR, Sky SNR, \
@@ -492,7 +495,7 @@ def main(args):
         if args.v:
             print("Generating Header")
         header_size = 16384                 #bytes
-        params = {
+        hdr_params = {
               "HDR_VERSION":  1.0,
               "HDR_SIZE": header_size,
               "TELESCOPE":    "MOST",
@@ -528,13 +531,13 @@ def main(args):
               "PEAK": maxima,                          #peak signal of the FRB
               }
 
-        header_string = make_psrdada_header(header_size, params)
+        header_string = make_psrdada_header(header_size, hdr_params)
         if not args.plot:
             if args.v:
                 print("Saving the FRB in '"+database_directory+"' directory")
 
             with open(database_directory+name, 'wb') as out:
-                out.write(header_string)
+                out.write(header_string.encode())
                 if order == "TF":
                     #Order = 'F' means column-major, since we are writing data in TF format.
                     O = 'F'				
@@ -542,11 +545,10 @@ def main(args):
                     #Order = 'C' means row-major, since we are writing data in FT format.
                     O = 'C'				
                 final_frb.flatten(order=O).tofile(out)
-            logger.write(ID+"\t"+str(dm)+"\t"+str(FWHM*tsamp)+"\t" \
-                        + str(tau0*tsamp)+"\t" + str(output_snr)+"\t" \
-                        +str(signal_after_scrunching)+"\n")
+            logger.write(f'{ID}\t{dm:.2f}\t{FWHM*tsamp:.8f}\t{tau0*tsamp:.10f}'
+                         f'\t{output_snr:.2f}\t{signal_after_scrunching:.2f}\n')
           
-            print("Name : ", params["SOURCE"])
+            print("Name : ", hdr_params["SOURCE"])
 
         #-----------------------------------------------------------------------
     if not args.plot:
